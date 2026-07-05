@@ -312,6 +312,7 @@ nav .badge{position:absolute;top:4px;right:calc(50% - 20px);background:var(--err
         <div style="font-weight:800;font-size:14px;color:var(--marinho);margin-bottom:8px" id="filaTitulo"></div>
         <div id="filaLista"></div>
         <button class="btn btn-verde" id="btnSync" onclick="sincronizarFila()">Enviar agora</button>
+        <button class="btn btn-out" style="margin-top:8px;color:var(--erro);border-color:var(--erro)" onclick="limparFila()">Limpar fila</button>
       </div>
 
       <label style="display:block">
@@ -803,6 +804,29 @@ async function renderFila(){
   btn.disabled = !online || sincronizando;
 }
 
+/* ---------- SANITIZA undefined -> null (RTDB rejeita undefined) ---------- */
+function limparUndefined(obj){
+  const out = {};
+  for(const k in obj){
+    const v = obj[k];
+    if(v === undefined) out[k] = null;
+    else if(v && typeof v === 'object' && !Array.isArray(v)) out[k] = limparUndefined(v);
+    else out[k] = v;
+  }
+  return out;
+}
+
+/* ---------- LIMPAR FILA (descarta órfãos / pendências) ---------- */
+async function limparFila(){
+  if(!idb){ try{ await abrirIDB(); }catch(e){ return; } }
+  const itens = await idbAll();
+  if(!itens.length){ toast('A fila já está vazia'); return; }
+  if(!confirm('Apagar os '+itens.length+' registro(s) da fila? As fotos não enviadas serão perdidas.')) return;
+  for(const it of itens){ await idbDel(it.localId); }
+  await renderFila();
+  toast('Fila limpa. Pode fotografar de novo.');
+}
+
 /* ---------- SINCRONIZAÇÃO (fila -> RTDB) ---------- */
 async function sincronizarFila(){
   if(sincronizando || !online || !USER) return;
@@ -812,15 +836,27 @@ async function sincronizarFila(){
   sincronizando = true; await renderFila();
   for(const it of itens){
     try{
+      // Foto pode estar como imgFull (versão nova) ou blobFull (versão antiga = incompatível)
+      const imagem = it.imgFull || null;
+      const thumbn = it.thumb || null;
+      if(!imagem){
+        // Item órfão do código antigo (salvou Blob, não dataURL): não dá para enviar.
+        await idbDel(it.localId);
+        toast('Registro antigo incompatível removido da fila. Re-fotografe.');
+        await renderFila();
+        continue;
+      }
       it.status='enviando'; await idbAdd(it); await renderFila();
-      await REF.push({
+      // sanitiza: RTDB rejeita qualquer undefined
+      const dados = limparUndefined({
         esp:it.esp, sci:it.sci, tam:it.tam, peso:it.peso, obs:it.obs||'',
         lat:it.lat, lng:it.lng, ts:it.ts,
-        img:it.imgFull, thumb:it.thumb,
+        img:imagem, thumb:thumbn,
         autorNome:it.autorNome, autorFoto:it.autorFoto, autorUid:it.autorUid,
         criadoLocal:it.criadoLocal,
         reacoes:{}, comentarios:{}
       });
+      await REF.push(dados);
       await idbDel(it.localId);
       await renderFila();
     }catch(e){
