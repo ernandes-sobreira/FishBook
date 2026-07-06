@@ -773,11 +773,11 @@ async function novaFoto(files){
   const file = files[0];
   document.getElementById('fileIn').value = '';
   toast('Preparando foto…');
-  let lat=null,lng=null,exif=false,dt=null;
+  let lat=null,lng=null,exif=false,dt=null,fonteGps='ausente';
   try{
     const ex = await exifr.parse(file, {gps:true, pick:['DateTimeOriginal','CreateDate','latitude','longitude']});
     if(ex){
-      if(ex.latitude!=null && ex.longitude!=null){ lat=ex.latitude; lng=ex.longitude; exif=true; }
+      if(ex.latitude!=null && ex.longitude!=null){ lat=ex.latitude; lng=ex.longitude; exif=true; fonteGps='exif'; }
       dt = ex.DateTimeOriginal || ex.CreateDate || null;
     }
   }catch(e){ console.warn('EXIF', e); }
@@ -785,13 +785,13 @@ async function novaFoto(files){
   if(lat==null && navigator.geolocation){
     try{
       const pos = await new Promise((rs,rj)=>navigator.geolocation.getCurrentPosition(rs,rj,{timeout:8000,enableHighAccuracy:true}));
-      lat=pos.coords.latitude; lng=pos.coords.longitude; exif=false;
+      lat=pos.coords.latitude; lng=pos.coords.longitude; exif=false; fonteGps='aparelho';
     }catch(e){}
   }
   // foto principal LEVE (~80-110KB) e thumb (~20KB) — ambas base64 no RTDB
   const imgFull = await comprimirDataURL(file, 900, 0.58);
   const thumb   = await comprimirDataURL(file, 360, 0.5);
-  fotoPend = {imgFull, thumb, ts, lat, lng, exif};
+  fotoPend = {imgFull, thumb, ts, lat, lng, exif, fonteGps};
   abrirFormRegistro();
 }
 
@@ -876,7 +876,7 @@ async function salvarRegistro(){
     localId, imgFull:f.imgFull, thumb:f.thumb,
     esp, sci:sciDe(esp), subEsp, tam, peso:isNaN(peso)?null:peso, obs,
     local, isca, equip, bacia, bioma,
-    lat:f.lat, lng:f.lng, ts:f.ts,
+    lat:f.lat, lng:f.lng, fonteGps:f.fonteGps||'ausente', ts:f.ts,
     autorNome:USER.nome, autorFoto:USER.foto, autorUid:USER.uid,
     criadoLocal:Date.now(), status:'pendente'
   };
@@ -954,7 +954,7 @@ async function sincronizarFila(){
       const dados = limparUndefined({
         esp:it.esp, sci:it.sci, subEsp:it.subEsp||null, tam:it.tam, peso:it.peso, obs:it.obs||'',
         local:it.local||'', isca:it.isca||'', equip:it.equip||'', bacia:it.bacia||'', bioma:it.bioma||'',
-        lat:it.lat, lng:it.lng, ts:it.ts,
+        lat:it.lat, lng:it.lng, fonteGps:it.fonteGps||'ausente', ts:it.ts,
         img:imagem, thumb:thumbn,
         autorNome:it.autorNome, autorFoto:it.autorFoto, autorUid:it.autorUid,
         criadoLocal:it.criadoLocal,
@@ -1015,7 +1015,9 @@ function cardHtml(r){
   Object.values(reacoes).forEach(v=>{ if(v==='heart')nHeart++; else if(v==='like')nLike++; });
   const coms = r.comentarios ? Object.values(r.comentarios) : [];
   const imgSrc = r.img || r.thumb || '';
-  const local = (r.lat!=null)?`<span>📍 <b>${r.lat.toFixed(4)}, ${r.lng.toFixed(4)}</b></span>`:'';
+  const fonteLabel = {exif:'📷 GPS da foto', aparelho:'📱 GPS do aparelho', manual:'✏️ marcado no mapa', ausente:''};
+  const fonteTxt = r.lat!=null ? (fonteLabel[r.fonteGps]||'') : '';
+  const local = (r.lat!=null)?`<span>📍 <b>${r.lat.toFixed(4)}, ${r.lng.toFixed(4)}</b>${fonteTxt?` <small style="color:var(--tinta2)">· ${fonteTxt}</small>`:''}</span>`:'';
   const souDono = r.autorUid === USER.uid;
   const espMostra = esc(r.esp) + (r.subEsp && r.subEsp!=='Não sei' ? ` <span class="sci">${esc(r.subEsp)}</span>` : (r.sci?` <span class="sci">${esc(r.sci)}</span>`:''));
   // linha de detalhes de pesca
@@ -1240,7 +1242,7 @@ function abrirPick(){
 function fecharPick(){ document.getElementById('pickModal').classList.remove('on'); }
 function confirmarPick(){
   if(!pickLatLng){ toast('Toque no mapa para marcar'); return; }
-  if(fotoPend){ fotoPend.lat=pickLatLng.lat; fotoPend.lng=pickLatLng.lng; fotoPend.exif=false; }
+  if(fotoPend){ fotoPend.lat=pickLatLng.lat; fotoPend.lng=pickLatLng.lng; fotoPend.exif=false; fotoPend.fonteGps='manual'; }
   fecharPick(); abrirFormRegistro();
 }
 
@@ -1277,8 +1279,8 @@ async function exportCSV(){
   try{ val=(await REF.once('value')).val()||{}; }catch(e){ mostrarErro('Exportar', e); return; }
   const arr=Object.keys(val).map(k=>Object.assign({id:k},val[k]));
   if(!arr.length){ toast('Sem dados'); return; }
-  const cab=['id','especie','subespecie','nome_cientifico','tamanho_cm','peso_kg','local','isca','equipamento','bacia','bioma','latitude','longitude','autor','data','observacao'];
-  const linhas=arr.map(r=>[r.id,r.esp,r.subEsp||'',r.sci,r.tam,r.peso!=null?r.peso:'',r.local||'',r.isca||'',r.equip||'',r.bacia||'',r.bioma||'',r.lat!=null?r.lat:'',r.lng!=null?r.lng:'',r.autorNome,new Date(r.ts).toISOString(),(r.obs||'').replace(/[\r\n;]/g,' ')].map(c=>`"${String(c==null?'':c).replace(/"/g,'""')}"`).join(';'));
+  const cab=['id','especie','subespecie','nome_cientifico','tamanho_cm','peso_kg','local','isca','equipamento','bacia','bioma','latitude','longitude','fonte_gps','autor','data','observacao'];
+  const linhas=arr.map(r=>[r.id,r.esp,r.subEsp||'',r.sci,r.tam,r.peso!=null?r.peso:'',r.local||'',r.isca||'',r.equip||'',r.bacia||'',r.bioma||'',r.lat!=null?r.lat:'',r.lng!=null?r.lng:'',r.fonteGps||'',r.autorNome,new Date(r.ts).toISOString(),(r.obs||'').replace(/[\r\n;]/g,' ')].map(c=>`"${String(c==null?'':c).replace(/"/g,'""')}"`).join(';'));
   baixar('fishbook_dados.csv','\ufeff'+cab.join(';')+'\n'+linhas.join('\n'),'text/csv;charset=utf-8');
   toast('CSV baixado ('+arr.length+' registros)');
 }
@@ -1287,7 +1289,7 @@ async function exportGeoJSON(){
   try{ val=(await REF.once('value')).val()||{}; }catch(e){ mostrarErro('Exportar', e); return; }
   const arr=Object.keys(val).map(k=>val[k]).filter(r=>r.lat!=null);
   if(!arr.length){ toast('Nenhum registro com GPS'); return; }
-  const feats=arr.map(r=>({type:'Feature',geometry:{type:'Point',coordinates:[r.lng,r.lat]},properties:{especie:r.esp,subespecie:r.subEsp||'',sci:r.sci,tamanho_cm:r.tam,peso_kg:r.peso,local:r.local||'',isca:r.isca||'',equipamento:r.equip||'',bacia:r.bacia||'',bioma:r.bioma||'',autor:r.autorNome,data:new Date(r.ts).toISOString()}}));
+  const feats=arr.map(r=>({type:'Feature',geometry:{type:'Point',coordinates:[r.lng,r.lat]},properties:{especie:r.esp,subespecie:r.subEsp||'',sci:r.sci,tamanho_cm:r.tam,peso_kg:r.peso,local:r.local||'',isca:r.isca||'',equipamento:r.equip||'',bacia:r.bacia||'',bioma:r.bioma||'',fonte_gps:r.fonteGps||'',autor:r.autorNome,data:new Date(r.ts).toISOString()}}));
   baixar('fishbook_pontos.geojson',JSON.stringify({type:'FeatureCollection',features:feats},null,2),'application/geo+json');
   toast('GeoJSON baixado ('+feats.length+' pontos)');
 }
