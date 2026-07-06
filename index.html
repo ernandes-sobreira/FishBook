@@ -306,6 +306,10 @@ nav .badge{position:absolute;top:4px;right:calc(50% - 20px);background:var(--err
   <section class="tab" id="tab-mapa" style="position:relative">
     <div id="map"></div>
     <div class="map-legend" id="mapLegend">📍 0 registros</div>
+    <div style="position:absolute;top:12px;right:12px;z-index:800;display:flex;gap:6px;background:#fff;border-radius:10px;padding:4px;box-shadow:0 2px 10px rgba(0,0,0,.15)">
+      <button id="btnPontos" class="on" onclick="setMapaModo('pontos')" style="font-size:12px;font-weight:800;padding:6px 10px;border-radius:8px;background:var(--azul);color:#fff">Pontos</button>
+      <button id="btnCalor" onclick="setMapaModo('calor')" style="font-size:12px;font-weight:800;padding:6px 10px;border-radius:8px;background:var(--papel);color:var(--tinta2)">Calor</button>
+    </div>
   </section>
 
   <!-- ===== ENVIAR ===== -->
@@ -320,14 +324,25 @@ nav .badge{position:absolute;top:4px;right:calc(50% - 20px);background:var(--err
         <button class="btn btn-out" style="margin-top:8px;color:var(--erro);border-color:var(--erro)" onclick="limparFila()">Limpar fila</button>
       </div>
 
-      <label style="display:block">
-        <div class="up-zone">
-          <div class="icn">🐟</div>
-          <b>Toque para fotografar</b>
-          <small>Tire a foto ou escolha da galeria. Funciona sem internet — envia depois.</small>
-        </div>
-        <input type="file" id="fileIn" accept="image/*" capture="environment" class="hidden" onchange="novaFoto(this.files)">
-      </label>
+      <div style="display:flex;gap:10px">
+        <label style="flex:1;display:block">
+          <div class="up-zone" style="padding:22px 12px">
+            <div class="icn">📷</div>
+            <b style="font-size:16px">Tirar foto</b>
+            <small>Usar a câmera agora</small>
+          </div>
+          <input type="file" id="fileInCam" accept="image/*" capture="environment" class="hidden" onchange="novaFoto(this.files,'camera')">
+        </label>
+        <label style="flex:1;display:block">
+          <div class="up-zone" style="padding:22px 12px;border-color:var(--verde);color:var(--verde)">
+            <div class="icn">🖼️</div>
+            <b style="font-size:16px">Da galeria</b>
+            <small>Escolher foto salva</small>
+          </div>
+          <input type="file" id="fileInGal" accept="image/*" class="hidden" onchange="novaFoto(this.files,'galeria')">
+        </label>
+      </div>
+      <div style="text-align:center;font-size:12.5px;color:var(--tinta2);margin-top:8px">Funciona sem internet — envia sozinho quando conectar.</div>
     </div>
   </section>
 
@@ -446,6 +461,7 @@ nav .badge{position:absolute;top:4px;right:calc(50% - 20px);background:var(--err
 <!-- Leaflet + cluster -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"></script>
 <!-- EXIF -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exifr/7.1.3/full.umd.min.js"></script>
 
@@ -768,10 +784,11 @@ function comprimirDataURL(file, maxLado, qualidade){
 
 /* ---------- NOVA FOTO ---------- */
 let fotoPend = null;
-async function novaFoto(files){
+async function novaFoto(files, origem){
   if(!files || !files.length) return;
   const file = files[0];
-  document.getElementById('fileIn').value = '';
+  const c1=document.getElementById('fileInCam'); if(c1) c1.value='';
+  const c2=document.getElementById('fileInGal'); if(c2) c2.value='';
   toast('Preparando foto…');
   let lat=null,lng=null,exif=false,dt=null,fonteGps='ausente';
   try{
@@ -782,7 +799,9 @@ async function novaFoto(files){
     }
   }catch(e){ console.warn('EXIF', e); }
   const ts = dt ? new Date(dt).getTime() : (file.lastModified||Date.now());
-  if(lat==null && navigator.geolocation){
+  // GPS do aparelho SÓ para foto tirada na câmera agora.
+  // Foto da galeria sem EXIF NÃO recebe GPS do aparelho (seria o local do envio, não da pesca).
+  if(lat==null && origem==='camera' && navigator.geolocation){
     try{
       const pos = await new Promise((rs,rj)=>navigator.geolocation.getCurrentPosition(rs,rj,{timeout:8000,enableHighAccuracy:true}));
       lat=pos.coords.latitude; lng=pos.coords.longitude; exif=false; fonteGps='aparelho';
@@ -791,7 +810,7 @@ async function novaFoto(files){
   // foto principal LEVE (~80-110KB) e thumb (~20KB) — ambas base64 no RTDB
   const imgFull = await comprimirDataURL(file, 900, 0.58);
   const thumb   = await comprimirDataURL(file, 360, 0.5);
-  fotoPend = {imgFull, thumb, ts, lat, lng, exif, fonteGps};
+  fotoPend = {imgFull, thumb, ts, lat, lng, exif, fonteGps, origem};
   abrirFormRegistro();
 }
 
@@ -807,9 +826,18 @@ function abrirFormRegistro(){
   const optsBacia = BACIAS.map(i=>`<option value="${esc(i)}">${esc(i)}</option>`).join('');
   const biomaAuto = biomaPorCoord(f.lat, f.lng);
   const optsBioma = BIOMAS.map(i=>`<option value="${esc(i)}" ${i===biomaAuto?'selected':''}>${esc(i)}</option>`).join('');
-  const gpsHtml = f.lat!=null
-    ? `<div class="gps-ok">📍 ${f.lat.toFixed(5)}, ${f.lng.toFixed(5)} ${f.exif?'(da foto)':'(GPS do aparelho)'}</div>`
-    : `<div class="gps-no">Sem localização — <button onclick="abrirPick()">marcar no mapa</button></div>`;
+  const fonte = f.fonteGps || 'ausente';
+  const fraco = (fonte==='aparelho' || fonte==='ausente');
+  let gpsHtml;
+  if(f.lat!=null){
+    const fonteTxt = fonte==='exif' ? '📷 da foto (confiável)' : fonte==='manual' ? '✏️ marcado no mapa' : '📱 do aparelho — pode ser o local do envio, não da pesca';
+    gpsHtml = `<div class="${fraco?'gps-no':'gps-ok'}">
+        📍 ${f.lat.toFixed(5)}, ${f.lng.toFixed(5)}<br><small>${fonteTxt}</small>
+        <div style="margin-top:6px"><button onclick="abrirPick()" style="color:var(--azul);font-weight:800;text-decoration:underline">${fraco?'⚠️ Ajustar para o local da pesca':'ajustar local'}</button></div>
+      </div>`;
+  } else {
+    gpsHtml = `<div class="gps-no">Sem localização — <button onclick="abrirPick()" style="color:var(--azul);font-weight:800;text-decoration:underline">marcar no mapa onde pescou</button></div>`;
+  }
   form.innerHTML = `
     <div class="up-item">
       <img class="upimg" src="${f.thumb}" alt="">
@@ -870,6 +898,11 @@ async function salvarRegistro(){
   const bacia = document.getElementById('regBacia').value;
   const bioma = document.getElementById('regBioma').value;
   if(isNaN(tam)||tam<=0){ toast('Informe o tamanho em cm'); document.getElementById('regTam').focus(); return; }
+  if(f.lat==null){
+    toast('📍 Marque no mapa onde você pescou antes de salvar');
+    abrirPick();
+    return;
+  }
   if(!idb){ try{ await abrirIDB(); }catch(e){ mostrarErro('Salvar', e); return; } }
   const localId = 'l_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);
   const item = {
@@ -1161,11 +1194,42 @@ function iniciarMapa(){
   markerCluster = L.markerClusterGroup({maxClusterRadius:50, chunkedLoading:true});
   map.addLayer(markerCluster);
 }
+let mapaModo = 'pontos';
+let heatLayer = null;
+const HEAT_MIN = 15; // mínimo de pontos com local para o heatmap fazer sentido
+function setMapaModo(m){
+  mapaModo = m;
+  document.getElementById('btnPontos').style.background = m==='pontos'?'var(--azul)':'var(--papel)';
+  document.getElementById('btnPontos').style.color = m==='pontos'?'#fff':'var(--tinta2)';
+  document.getElementById('btnCalor').style.background = m==='calor'?'var(--azul)':'var(--papel)';
+  document.getElementById('btnCalor').style.color = m==='calor'?'#fff':'var(--tinta2)';
+  desenharMapa();
+}
 function desenharMapa(){
   if(!map||!markerCluster) return;
   markerCluster.clearLayers();
+  if(heatLayer){ map.removeLayer(heatLayer); heatLayer=null; }
   const comGps = amostraMapa.filter(r=>r.lat!=null && r.lng!=null);
   const leg = document.getElementById('mapLegend');
+
+  if(mapaModo==='calor'){
+    // trava: heatmap só com dado suficiente, senão vira mancha enganosa
+    if(comGps.length < HEAT_MIN){
+      leg.textContent = '🔥 Mapa de calor disponível a partir de '+HEAT_MIN+' registros com local ('+comGps.length+' agora)';
+      // mostra pontos como fallback para não ficar tela vazia
+      comGps.forEach(r=>{ markerCluster.addLayer(L.marker([r.lat,r.lng])); });
+      return;
+    }
+    const pts = comGps.map(r=>[r.lat, r.lng, 0.6]);
+    heatLayer = L.heatLayer(pts, {radius:28, blur:20, maxZoom:12,
+      gradient:{0.2:'#0071BB',0.5:'#3FA535',0.75:'#FEC31B',1:'#E8701A'}});
+    map.addLayer(heatLayer);
+    leg.textContent = '🔥 Concentração de registros de pesca — '+comGps.length+' pontos';
+    const b=comGps.map(r=>[r.lat,r.lng]); if(b.length){ try{ map.fitBounds(L.latLngBounds(b).pad(0.25)); }catch(e){} }
+    return;
+  }
+
+  // modo pontos
   leg.textContent = '📍 ' + comGps.length + ' registro(s)' + (amostraMapa.length>=MAPA_MAX?' (últimos '+MAPA_MAX+')':'');
   const bounds=[];
   comGps.forEach(r=>{
@@ -1242,8 +1306,20 @@ function abrirPick(){
 function fecharPick(){ document.getElementById('pickModal').classList.remove('on'); }
 function confirmarPick(){
   if(!pickLatLng){ toast('Toque no mapa para marcar'); return; }
+  // preserva o que já foi digitado antes de reconstruir o form
+  const salvos = {};
+  ['regEsp','regSubEsp','regTam','regPeso','regLocal','regIsca','regEquip','regBacia','regBioma','regObs'].forEach(id=>{
+    const el=document.getElementById(id); if(el) salvos[id]=el.value;
+  });
   if(fotoPend){ fotoPend.lat=pickLatLng.lat; fotoPend.lng=pickLatLng.lng; fotoPend.exif=false; fotoPend.fonteGps='manual'; }
   fecharPick(); abrirFormRegistro();
+  // restaura
+  setTimeout(()=>{
+    Object.keys(salvos).forEach(id=>{ const el=document.getElementById(id); if(el && salvos[id]!=null && salvos[id]!=='') el.value=salvos[id]; });
+    if(document.getElementById('regEsp')) atualizarSubEsp();
+    // re-restaura subesp depois de atualizarSubEsp reconstruir as opções
+    if(salvos['regSubEsp'] && document.getElementById('regSubEsp')) document.getElementById('regSubEsp').value=salvos['regSubEsp'];
+  },50);
 }
 
 /* ---------- DADOS / STATS ---------- */
