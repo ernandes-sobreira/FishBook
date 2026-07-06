@@ -528,11 +528,12 @@ const ISCAS = ["Não informado","Isca viva","Isca natural (corte)","Massa","Arti
 const EQUIPAMENTOS = ["Não informado","Vara e molinete","Vara e carretilha","Caniço simples","Rede","Tarrafa","Linha de mão","Fly","Outro"];
 const BACIAS = ["Não informado","Bacia do Rio Paraguai","Bacia do Rio Guaporé","Bacia do Rio Cuiabá","Bacia do Rio Paraná","Bacia Amazônica","Outra"];
 /* Bioma é auto-detectado pela coordenada; este é fallback manual */
-const BIOMAS = ["Não informado","Pantanal","Cerrado","Amazônia","Mata Atlântica"];
+const BIOMAS = ["Não informado","Pantanal","Cerrado","Amazônia"];
 
 /* ---------- ESPÉCIES (Pantanal / rios MT) ---------- */
 const ESPECIES = [
-  {nome:"Pintado/Cachara (Pseudoplatystoma)", sci:"Pseudoplatystoma spp.", sub:["Não sei","Pintado (P. corruscans)","Cachara (P. reticulatum)"]},
+  {nome:"Pintado", sci:"Pseudoplatystoma corruscans"},
+  {nome:"Cachara", sci:"Pseudoplatystoma reticulatum"},
   {nome:"Pacu", sci:"Piaractus mesopotamicus"},
   {nome:"Dourado", sci:"Salminus brasiliensis"},
   {nome:"Pirarara", sci:"Phractocephalus hemioliopterus"},
@@ -910,11 +911,20 @@ function abrirFormRegistro(){
       </div>
       <div class="field"><label>Local da pesca — opcional</label><input type="text" id="regLocal" placeholder="Rio, baía, corixo…"></div>
       <div class="row2">
-        <div class="field"><label>Isca</label><select id="regIsca">${optsIsca}</select></div>
-        <div class="field"><label>Equipamento</label><select id="regEquip">${optsEquip}</select></div>
+        <div class="field"><label>Isca</label>
+          <select id="regIsca" onchange="toggleOutro('Isca',true)">${optsIsca}</select>
+          <input type="text" id="regIscaOutro" class="hidden" style="margin-top:6px" placeholder="Qual isca? (ex: queijo, mortadela)">
+        </div>
+        <div class="field"><label>Equipamento</label>
+          <select id="regEquip" onchange="toggleOutro('Equip',true)">${optsEquip}</select>
+          <input type="text" id="regEquipOutro" class="hidden" style="margin-top:6px" placeholder="Qual equipamento?">
+        </div>
       </div>
       <div class="row2">
-        <div class="field"><label>Bacia hidrográfica</label><select id="regBacia">${optsBacia}</select></div>
+        <div class="field"><label>Bacia hidrográfica</label>
+          <select id="regBacia" onchange="toggleOutro('Bacia',true)">${optsBacia}</select>
+          <input type="text" id="regBaciaOutro" class="hidden" style="margin-top:6px" placeholder="Qual bacia?">
+        </div>
         <div class="field"><label>Bioma ${biomaAuto?'(auto)':''}</label><select id="regBioma">${optsBioma}</select></div>
       </div>
       <div class="field"><label>Observação — opcional</label><input type="text" id="regObs" placeholder="Condição do tempo, água…"></div>
@@ -926,7 +936,7 @@ function abrirFormRegistro(){
     </div>`;
   form.scrollIntoView({behavior:'smooth', block:'start'});
 }
-/* subespécie condicional (só para Pintado/Cachara) */
+/* subespécie condicional (reservado para espécies com campo 'sub') */
 function atualizarSubEsp(){
   const nome = document.getElementById('regEsp').value;
   const e = ESPECIES.find(x=>x.nome===nome);
@@ -938,6 +948,15 @@ function atualizarSubEsp(){
   } else { wrap.style.display = 'none'; sel.innerHTML=''; }
 }
 function cancelarRegistro(){ fotoPend=null; const f=document.getElementById('regForm'); if(f) f.remove(); }
+/* Mostra campo de texto quando 'Outro/Outra' é selecionado */
+function toggleOutro(qual, comFoco){
+  const sel = document.getElementById('reg'+qual);
+  const inp = document.getElementById('reg'+qual+'Outro');
+  if(!sel || !inp) return;
+  const v = sel.value.toLowerCase();
+  if(v.startsWith('outr')){ inp.classList.remove('hidden'); if(comFoco) inp.focus(); }
+  else { inp.classList.add('hidden'); inp.value=''; }
+}
 
 /* ---------- SALVAR (vai p/ fila IndexedDB) ---------- */
 async function salvarRegistro(){
@@ -949,9 +968,17 @@ async function salvarRegistro(){
   const subEl = document.getElementById('regSubEsp');
   const subEsp = (document.getElementById('subEspWrap').style.display!=='none' && subEl) ? subEl.value : null;
   const local = document.getElementById('regLocal').value.trim();
-  const isca = document.getElementById('regIsca').value;
-  const equip = document.getElementById('regEquip').value;
-  const bacia = document.getElementById('regBacia').value;
+  const valOuTexto = (qual)=>{
+    const sel = document.getElementById('reg'+qual).value;
+    if(sel.toLowerCase().startsWith('outr')){
+      const t = (document.getElementById('reg'+qual+'Outro').value||'').trim();
+      return t ? t : sel;
+    }
+    return sel;
+  };
+  const isca = valOuTexto('Isca');
+  const equip = valOuTexto('Equip');
+  const bacia = valOuTexto('Bacia');
   const bioma = document.getElementById('regBioma').value;
   if(isNaN(tam)||tam<=0){ toast('Informe o tamanho em cm'); document.getElementById('regTam').focus(); return; }
   if(f.lat==null){
@@ -1364,7 +1391,7 @@ function confirmarPick(){
   if(!pickLatLng){ toast('Toque no mapa para marcar'); return; }
   // preserva o que já foi digitado antes de reconstruir o form
   const salvos = {};
-  ['regEsp','regSubEsp','regTam','regPeso','regLocal','regIsca','regEquip','regBacia','regBioma','regObs'].forEach(id=>{
+  ['regEsp','regSubEsp','regTam','regPeso','regLocal','regIsca','regIscaOutro','regEquip','regEquipOutro','regBacia','regBaciaOutro','regBioma','regObs'].forEach(id=>{
     const el=document.getElementById(id); if(el) salvos[id]=el.value;
   });
   if(fotoPend){ fotoPend.lat=pickLatLng.lat; fotoPend.lng=pickLatLng.lng; fotoPend.exif=false; fotoPend.fonteGps='manual'; }
@@ -1373,8 +1400,9 @@ function confirmarPick(){
   setTimeout(()=>{
     Object.keys(salvos).forEach(id=>{ const el=document.getElementById(id); if(el && salvos[id]!=null && salvos[id]!=='') el.value=salvos[id]; });
     if(document.getElementById('regEsp')) atualizarSubEsp();
-    // re-restaura subesp depois de atualizarSubEsp reconstruir as opções
     if(salvos['regSubEsp'] && document.getElementById('regSubEsp')) document.getElementById('regSubEsp').value=salvos['regSubEsp'];
+    // reexibe campos Outro se estavam preenchidos
+    ['Isca','Equip','Bacia'].forEach(q=>toggleOutro(q));
   },50);
 }
 
